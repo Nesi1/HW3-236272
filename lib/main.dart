@@ -11,6 +11,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:modal_bottom_sheet/modal_bottom_sheet.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'dart:async';
 import 'providers.dart';
 
@@ -77,10 +78,14 @@ class _RandomWordsState extends State<RandomWords> {
   final _remotelySaved = <String>{};
   final _biggerFont = const TextStyle(fontSize: 18);
 
+  final SnappingSheetController snappingSheetController = SnappingSheetController();
+
   final _firestore = FirebaseFirestore.instance;
   final _storage = FirebaseStorage.instance;
 
-  Image? _profile_picture;
+  ImageProvider<Object>? _profile_image;
+
+  double _blurity = 0.0;
 
   Future<bool> _addUser(String? uid, String email) async {
     try {
@@ -211,29 +216,32 @@ class _RandomWordsState extends State<RandomWords> {
                   controller: loginBtnController,
                   onPressed: () async {
                     var authRes = await context.read<AuthNotifier>().signIn(emailController.text, passwordController.text);
-                    //TODO: fix
                     String? profilePictureUrl;
                     try {
-                      profilePictureUrl = await _storage.ref(
-                          'profile_images')
+                      String? imageUrl = await _storage.ref('profile_images')
                           ?.child(context.read<AuthNotifier>().getUid() ?? '')
                           ?.getDownloadURL();
+
+                      if (authRes) {
+                        await _syncLocalAndRemote();
+                        setState(() {
+                          _profile_image = imageUrl != null ?
+                            NetworkImage(imageUrl) : null;
+                          loginBtnController.reset();
+                          Navigator.of(context).pop(); // pop of login page
+                        });
+                      }
+                      else {
+                        loginBtnController.reset();
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text(
+                                    'There was an error logging into the app')));
+                      }
                     }
                     catch(e){
                       profilePictureUrl = null;
-                    }
-                    loginBtnController.reset();
-                    if (authRes){
-                      await _syncLocalAndRemote();
-                      setState(() {
-                        _profile_picture = profilePictureUrl!=null ? Image.network(profilePictureUrl) : null;
-                        Navigator.of(context).pop(); // pop of login page
-                      });
-                    }
-                    else{
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                          content: Text('There was an error logging into the app')));
                     }
                   },
                   color: Colors.deepPurple,
@@ -332,7 +340,7 @@ class _RandomWordsState extends State<RandomWords> {
   void _signOut() {
     context.read<AuthNotifier>().signOut();
     _remotelySaved.clear();
-    _profile_picture = null;
+    _profile_image = null;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Successfully logged out')));
   }
@@ -438,8 +446,6 @@ class _RandomWordsState extends State<RandomWords> {
   @override
   Widget build (BuildContext context) {
     context.watch<AuthNotifier>().status;
-    SnappingSheetController snappingSheetController = SnappingSheetController();
-    double initialPosition = 0;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Startup Name Generator'),
@@ -466,6 +472,9 @@ class _RandomWordsState extends State<RandomWords> {
       ),
       body: context.read<AuthNotifier>().isAuthenticated() ?
         SnappingSheet(
+          onSheetMoved: (position) {
+            setState(() =>_blurity = position.relativeToSnappingPositions * 10);
+          },
           lockOverflowDrag: true,
           controller: snappingSheetController,
           snappingPositions: const [
@@ -480,10 +489,11 @@ class _RandomWordsState extends State<RandomWords> {
           grabbing: GestureDetector(
             onTap: () {
               if (snappingSheetController.isAttached) {
-                if (snappingSheetController.currentSnappingPosition != const SnappingPosition.factor(positionFactor: 0) &&
-                    snappingSheetController.currentSnappingPosition != const SnappingPosition.factor(positionFactor: 0.04)){
+                if (snappingSheetController.currentSnappingPosition == const SnappingPosition.factor(positionFactor: 0.25)){
                   snappingSheetController.snapToPosition(
-                      const SnappingPosition.factor(positionFactor: 0.04));
+                      const SnappingPosition.factor(positionFactor: 0.0,
+                          grabbingContentOffset: GrabbingContentOffset.top)
+                  );
                 }
                 else {
                   snappingSheetController.snapToPosition(
@@ -504,49 +514,65 @@ class _RandomWordsState extends State<RandomWords> {
           ),
           sheetBelow: SnappingSheetContent(
             draggable: true,
-            child: UserProfile(localProfileImage: _profile_picture, storageInstance: _storage),
+            child: UserProfile(localProfileImage: _profile_image, storageInstance: _storage),
           ),
-          child: ListView.builder(
-          padding: const EdgeInsets.all(16.0),
-          itemBuilder: (context, i) {
-            if (i.isOdd) return const Divider();
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+                ListView.builder(
+                padding: const EdgeInsets.all(16.0),
+                itemBuilder: (context, i) {
+                  if (i.isOdd) return const Divider();
 
-            final index = i ~/ 2;
-            if (index >= _suggestions.length) {
-              _suggestions.addAll(generateWordPairs().take(10));
-            }
-            final alreadySaved = _locallySaved.contains(_suggestions[index]) ||
-                _remotelySaved.contains(_suggestions[index].asPascalCase);
-            return ListTile(
-              title: Text(
-                _suggestions[index].asPascalCase,
-                style: _biggerFont,
-              ),
-              trailing: Icon(
-                alreadySaved ? Icons.favorite : Icons.favorite_border,
-                color: alreadySaved ? Colors.red : null,
-                semanticLabel: alreadySaved ? 'Remove from saved' : 'Save',
-              ),
-              onTap: () {
-                setState(() {
-                  if (alreadySaved) {
-                    _locallySaved.remove(_suggestions[index]);
-                    if(context.read<AuthNotifier>().isAuthenticated()) {
-                      _remotelySaved.remove(_suggestions[index].asPascalCase);
-                      _removeUserSuggestion(_suggestions[index].asPascalCase);
-                    }
-                  } else {
-                    _locallySaved.add(_suggestions[index]);
-                    if(context.read<AuthNotifier>().isAuthenticated()) {
-                      _remotelySaved.add(_suggestions[index].asPascalCase);
-                      _addSuggestionsToUser({_suggestions[index].asPascalCase});
-                    }
+                  final index = i ~/ 2;
+                  if (index >= _suggestions.length) {
+                    _suggestions.addAll(generateWordPairs().take(10));
                   }
-                });
-              },
-            );
-          }, // callback for item builder
-        ),
+                  final alreadySaved = _locallySaved.contains(_suggestions[index]) ||
+                      _remotelySaved.contains(_suggestions[index].asPascalCase);
+                  return ListTile(
+                    title: Text(
+                      _suggestions[index].asPascalCase,
+                      style: _biggerFont,
+                    ),
+                    trailing: Icon(
+                      alreadySaved ? Icons.favorite : Icons.favorite_border,
+                      color: alreadySaved ? Colors.red : null,
+                      semanticLabel: alreadySaved ? 'Remove from saved' : 'Save',
+                    ),
+                    onTap: () {
+                      setState(() {
+                        if (alreadySaved) {
+                          _locallySaved.remove(_suggestions[index]);
+                          if(context.read<AuthNotifier>().isAuthenticated()) {
+                            _remotelySaved.remove(_suggestions[index].asPascalCase);
+                            _removeUserSuggestion(_suggestions[index].asPascalCase);
+                          }
+                        } else {
+                          _locallySaved.add(_suggestions[index]);
+                          if(context.read<AuthNotifier>().isAuthenticated()) {
+                            _remotelySaved.add(_suggestions[index].asPascalCase);
+                            _addSuggestionsToUser({_suggestions[index].asPascalCase});
+                          }
+                        }
+                      });
+                    },
+                  );
+                }, // callback for item builder
+              ),
+              ] +
+              (_blurity>0 ?
+                <Widget>[BackdropFilter(
+              filter: ui.ImageFilter.blur(
+                sigmaX: _blurity,
+                sigmaY: _blurity,
+              ),
+              child: Container(
+                color: Colors.transparent,
+              ),
+            )]:
+                <Widget>[]),
+          ),
         ):
         ListView.builder(
         padding: const EdgeInsets.all(16.0),
@@ -594,7 +620,7 @@ class _RandomWordsState extends State<RandomWords> {
 }
 
 class UserProfile extends StatefulWidget {
-  Image? localProfileImage;
+  ImageProvider<Object>? localProfileImage;
   final FirebaseStorage? storageInstance;
 
   UserProfile({Key? key, this.localProfileImage, this.storageInstance}) : super(key: key);
@@ -622,7 +648,7 @@ class _UserProfileState extends State<UserProfile> {
           leading: widget.localProfileImage != null ?
             CircleAvatar(
               radius: 38,
-              backgroundImage: widget.localProfileImage?.image,
+              backgroundImage: widget.localProfileImage,
             ):
             null,
           title: Text(
@@ -642,7 +668,10 @@ class _UserProfileState extends State<UserProfile> {
 
                     if (result != null) {
                       var imageFile = File(result.files.single.path??'');
-                      setState(() => widget.localProfileImage = Image.file(imageFile));
+                      setState(() {
+                        Image? image = Image.file(imageFile);
+                        widget.localProfileImage = image.image;
+                      });
                       uploadFile(imageFile, "profile_images/${context.read<AuthNotifier>().getUid()??''}");
                     } else {
                       if (!mounted) return;
