@@ -8,7 +8,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:change_case/change_case.dart';
 import 'package:snapping_sheet/snapping_sheet.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:modal_bottom_sheet/modal_bottom_sheet.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -216,7 +215,6 @@ class _RandomWordsState extends State<RandomWords> {
                   controller: loginBtnController,
                   onPressed: () async {
                     var authRes = await context.read<AuthNotifier>().signIn(emailController.text, passwordController.text);
-                    String? profilePictureUrl;
                     try {
                       String? imageUrl = await _storage.ref('profile_images')
                           ?.child(context.read<AuthNotifier>().getUid() ?? '')
@@ -241,7 +239,7 @@ class _RandomWordsState extends State<RandomWords> {
                       }
                     }
                     catch(e){
-                      profilePictureUrl = null;
+                      _profile_image = null;
                     }
                   },
                   color: Colors.deepPurple,
@@ -672,7 +670,7 @@ class _UserProfileState extends State<UserProfile> {
                         Image? image = Image.file(imageFile);
                         widget.localProfileImage = image.image;
                       });
-                      uploadFile(imageFile, "profile_images/${context.read<AuthNotifier>().getUid()??''}");
+                      await uploadFile(imageFile, "profile_images/${context.read<AuthNotifier>().getUid()??''}");
                     } else {
                       if (!mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
