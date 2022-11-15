@@ -217,9 +217,8 @@ class _RandomWordsState extends State<RandomWords> {
                     var authRes = await context.read<AuthNotifier>().signIn(emailController.text, passwordController.text);
                     try {
                       String? imageUrl = await _storage.ref('profile_images')
-                          ?.child(context.read<AuthNotifier>().getUid() ?? '')
-                          ?.getDownloadURL();
-
+                          .child(context.read<AuthNotifier>().getUid() ?? '')
+                          .getDownloadURL();
                       if (authRes) {
                         await _syncLocalAndRemote();
                         setState(() {
@@ -238,8 +237,10 @@ class _RandomWordsState extends State<RandomWords> {
                                     'There was an error logging into the app')));
                       }
                     }
-                    catch(e){
+                    on Exception catch(e){
                       _profile_image = null;
+                      loginBtnController.reset();
+                      Navigator.of(context).pop();
                     }
                   },
                   color: Colors.deepPurple,
